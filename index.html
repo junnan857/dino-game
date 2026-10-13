@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小恐龙跑酷</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f7f7f7; font-family: monospace; }
+canvas { border: 1px solid #ccc; background: #fff; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="300"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const GROUND_Y = 230;
+
+const GameState = { IDLE: 0, PLAYING: 1, GAMEOVER: 2 };
+let state = GameState.IDLE;
+
+let score = 0, highScore = 0, speed = 6, frameCount = 0;
+let obstacles = [], clouds = [], groundDots = [];
+let isJumping = false, isDucking = false, jumpVel = 0;
+const GRAVITY = 0.8, JUMP_FORCE = -13;
+let dinoY = GROUND_Y, dinoX = 80;
+
+function reset() {
+  score = 0; speed = 6; frameCount = 0;
+  obstacles = []; clouds = []; groundDots = [];
+  isJumping = false; isDucking = false; jumpVel = 0;
+  dinoY = GROUND_Y;
+  for (let i = 0; i < 5; i++) clouds.push({ x: Math.random() * W, y: 30 + Math.random() * 60, speed: 0.5 + Math.random() * 0.5 });
+  for (let i = 0; i < 20; i++) groundDots.push({ x: Math.random() * W, y: GROUND_Y + 5 + Math.random() * 30 });
+}
+
+function drawDino(x, y, ducking) {
+  ctx.fillStyle = '#535353';
+  if (ducking) {
+    ctx.fillRect(x, y - 12, 52, 12);
+    ctx.fillRect(x + 40, y - 20, 12, 8);
+    ctx.fillRect(x + 44, y - 18, 4, 4);
+    ctx.fillRect(x + 4, y - 4, 8, 4);
+    ctx.fillRect(x + 20, y - 4, 8, 4);
+    ctx.fillRect(x + 36, y - 4, 8, 4);
+  } else {
+    ctx.fillRect(x, y - 44, 22, 22);
+    ctx.fillRect(x + 18, y - 44, 18, 14);
+    ctx.fillRect(x + 30, y - 38, 6, 6);
+    ctx.fillRect(x, y - 22, 22, 22);
+    ctx.fillRect(x + 18, y - 30, 14, 8);
+    if (isJumping) {
+      ctx.fillRect(x + 4, y - 4, 8, 4);
+      ctx.fillRect(x + 14, y - 4, 8, 4);
+    } else {
+      const legFrame = Math.floor(frameCount / 6) % 2;
+      if (legFrame === 0) {
+        ctx.fillRect(x + 2, y - 4, 8, 4);
+        ctx.fillRect(x + 14, y - 4, 8, 4);
+      } else {
+        ctx.fillRect(x + 6, y - 4, 8, 4);
+        ctx.fillRect(x + 18, y - 4, 8, 4);
+      }
+    }
+    ctx.fillRect(x + 36, y - 40, 4, 4);
+  }
+}
+
+function drawCactus(x, y, type) {
+  ctx.fillStyle = '#535353';
+  if (type === 'small') {
+    ctx.fillRect(x + 4, y - 20, 8, 20);
+    ctx.fillRect(x, y - 14, 4, 8);
+    ctx.fillRect(x + 12, y - 14, 4, 8);
+  } else if (type === 'small2') {
+    ctx.fillRect(x + 4, y - 20, 8, 20);
+    ctx.fillRect(x, y - 16, 4, 8);
+    ctx.fillRect(x + 12, y - 16, 4, 8);
+    ctx.fillRect(x + 4, y - 28, 8, 8);
+  } else {
+    ctx.fillRect(x + 8, y - 36, 10, 36);
+    ctx.fillRect(x, y - 24, 8, 10);
+    ctx.fillRect(x + 18, y - 24, 8, 10);
+    ctx.fillRect(x + 8, y - 44, 10, 8);
+  }
+}
+
+function drawBird(x, y, wingFrame) {
+  ctx.fillStyle = '#535353';
+  ctx.fillRect(x + 16, y, 20, 8);
+  ctx.fillRect(x + 30, y - 4, 8, 4);
+  if (wingFrame === 0) {
+    ctx.fillRect(x + 18, y - 8, 14, 8);
+  } else {
+    ctx.fillRect(x + 18, y + 8, 14, 6);
+  }
+  ctx.fillRect(x + 36, y + 2, 4, 4);
+}
+
+function drawCloud(x, y) {
+  ctx.fillStyle = '#c4c4c4';
+  ctx.fillRect(x + 6, y, 24, 6);
+  ctx.fillRect(x, y + 4, 36, 6);
+  ctx.fillRect(x + 4, y + 10, 28, 4);
+}
+
+function spawnObstacle() {
+  const lastObs = obstacles[obstacles.length - 1];
+  const minGap = 120 + speed * 8;
+  if (!lastObs || lastObs.x < W - minGap - Math.random() * 100) {
+    const r = Math.random();
+    if (r < 0.3) {
+      obstacles.push({ type: 'bird', x: W + 20, y: GROUND_Y - 30 - Math.random() * 30, width: 40, height: 16 });
+    } else if (r < 0.55) {
+      obstacles.push({ type: 'small', x: W + 20, y: GROUND_Y, width: 16, height: 20 });
+    } else if (r < 0.8) {
+      obstacles.push({ type: 'small2', x: W + 20, y: GROUND_Y, width: 16, height: 28 });
+    } else {
+      obstacles.push({ type: 'large', x: W + 20, y: GROUND_Y, width: 26, height: 44 });
+    }
+  }
+}
+
+function getDinoBox() {
+  if (isDucking) {
+    return { x: dinoX, y: dinoY - 12, w: 52, h: 12 };
+  }
+  return { x: dinoX + 4, y: dinoY - 44, w: 30, h: 44 };
+}
+
+function checkCollision() {
+  const dino = getDinoBox();
+  for (const obs of obstacles) {
+    let box;
+    if (obs.type === 'bird') {
+      box = { x: obs.x + 16, y: obs.y, w: 24, h: 12 };
+    } else if (obs.type === 'small') {
+      box = { x: obs.x, y: obs.y - 20, w: 16, h: 20 };
+    } else if (obs.type === 'small2') {
+      box = { x: obs.x, y: obs.y - 28, w: 16, h: 28 };
+    } else {
+      box = { x: obs.x, y: obs.y - 44, w: 26, h: 44 };
+    }
+    if (dino.x < box.x + box.w && dino.x + dino.w > box.x &&
+        dino.y < box.y + box.h && dino.y + dino.h > box.y) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function drawGround() {
+  ctx.strokeStyle = '#535353';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, GROUND_Y);
+  ctx.lineTo(W, GROUND_Y);
+  ctx.stroke();
+  ctx.fillStyle = '#535353';
+  for (const dot of groundDots) {
+    ctx.fillRect(dot.x, dot.y, 2, 2);
+  }
+}
+
+function drawScore() {
+  ctx.fillStyle = '#535353';
+  ctx.font = '16px monospace';
+  ctx.textAlign = 'right';
+  const scoreStr = String(Math.floor(score)).padStart(5, '0');
+  ctx.fillText(scoreStr, W - 20, 30);
+  if (highScore > 0) {
+    ctx.fillStyle = '#a0a0a0';
+    ctx.fillText('HI ' + String(Math.floor(highScore)).padStart(5, '0'), W - 120, 30);
+  }
+}
+
+function drawIdleScreen() {
+  ctx.fillStyle = '#535353';
+  ctx.font = '20px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('小恐龙跑酷', W / 2, 80);
+  ctx.font = '14px monospace';
+  ctx.fillText('按 空格键 或 ↑ 开始游戏', W / 2, 120);
+  ctx.fillText('空格/↑ 跳跃  ↓ 下蹲', W / 2, 145);
+  drawDino(dinoX, GROUND_Y, false);
+  drawGround();
+  for (const cloud of clouds) drawCloud(cloud.x, cloud.y);
+}
+
+function drawGameOverScreen() {
+  ctx.fillStyle = '#535353';
+  ctx.font = '20px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('游戏结束', W / 2, 80);
+  ctx.font = '14px monospace';
+  ctx.fillText('按 空格键 重新开始', W / 2, 110);
+  ctx.fillText('得分: ' + Math.floor(score), W / 2, 140);
+  if (Math.floor(score) >= highScore && highScore > 0) {
+    ctx.fillStyle = '#e8453c';
+    ctx.fillText('新纪录!', W / 2, 165);
+  }
+}
+
+function update() {
+  frameCount++;
+
+  if (isJumping) {
+    dinoY += jumpVel;
+    jumpVel += GRAVITY;
+    if (dinoY >= GROUND_Y) {
+      dinoY = GROUND_Y;
+      isJumping = false;
+      jumpVel = 0;
+    }
+  }
+
+  for (const cloud of clouds) {
+    cloud.x -= cloud.speed;
+    if (cloud.x < -40) {
+      cloud.x = W + 20;
+      cloud.y = 30 + Math.random() * 60;
+    }
+  }
+
+  for (const dot of groundDots) {
+    dot.x -= speed;
+    if (dot.x < 0) dot.x = W;
+  }
+
+  spawnObstacle();
+
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    obstacles[i].x -= speed;
+    if (obstacles[i].x < -50) obstacles.splice(i, 1);
+  }
+
+  score += 0.1 * (speed / 6);
+  if (frameCount % 300 === 0 && speed < 14) speed += 0.5;
+
+  if (checkCollision()) {
+    state = GameState.GAMEOVER;
+    if (Math.floor(score) > highScore) highScore = Math.floor(score);
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, W, H);
+
+  for (const cloud of clouds) drawCloud(cloud.x, cloud.y);
+  drawGround();
+
+  for (const obs of obstacles) {
+    if (obs.type === 'bird') {
+      const wingFrame = Math.floor(frameCount / 10) % 2;
+      drawBird(obs.x, obs.y, wingFrame);
+    } else {
+      drawCactus(obs.x, obs.y, obs.type);
+    }
+  }
+
+  drawDino(dinoX, dinoY, isDucking);
+  drawScore();
+
+  if (state === GameState.GAMEOVER) {
+    drawGameOverScreen();
+  }
+}
+
+function gameLoop() {
+  if (state === GameState.PLAYING) {
+    update();
+    render();
+  } else if (state === GameState.IDLE) {
+    frameCount++;
+    for (const cloud of clouds) {
+      cloud.x -= cloud.speed * 0.3;
+      if (cloud.x < -40) cloud.x = W + 20;
+    }
+    ctx.clearRect(0, 0, W, H);
+    drawIdleScreen();
+  } else if (state === GameState.GAMEOVER) {
+    render();
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+function startGame() {
+  reset();
+  state = GameState.PLAYING;
+}
+
+function jump() {
+  if (state === GameState.IDLE) {
+    startGame();
+    return;
+  }
+  if (state === GameState.GAMEOVER) {
+    startGame();
+    return;
+  }
+  if (state === GameState.PLAYING && !isJumping) {
+    isJumping = true;
+    jumpVel = JUMP_FORCE;
+    isDucking = false;
+  }
+}
+
+function duck(down) {
+  if (state === GameState.PLAYING) {
+    isDucking = down;
+    if (down && isJumping) {
+      jumpVel = Math.max(jumpVel, 2);
+    }
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') {
+    e.preventDefault();
+    jump();
+  } else if (e.code === 'ArrowDown') {
+    e.preventDefault();
+    duck(true);
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowDown') {
+    duck(false);
+  }
+});
+
+canvas.addEventListener('mousedown', () => jump());
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); jump(); });
+
+reset();
+gameLoop();
+</script>
+</body>
+</html>
